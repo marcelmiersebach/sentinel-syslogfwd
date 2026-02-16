@@ -46,7 +46,7 @@ def configure_rsyslog_logrotate():
 /var/log/cron
 /var/log/spooler
 /var/log/syslog
-/var/log/*.log {
+{
     rotate 10
     size 10M
     missingok
