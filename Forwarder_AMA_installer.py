@@ -47,12 +47,10 @@ def configure_rsyslog_logrotate():
 /var/log/spooler
 /var/log/syslog
 {
-    rotate 10
+    rotate 3
     size 10M
     missingok
     notifempty
-    compress
-    delaycompress
     sharedscripts
     postrotate
         /bin/systemctl reload rsyslog > /dev/null 2>&1 || true
