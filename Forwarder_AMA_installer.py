@@ -27,59 +27,53 @@ rsyslog_old_config_tcp_content = "# provides TCP syslog reception\n$ModLoad imtc
 syslog_ng_documantation_path = "https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.26/administration-guide/34#TOPIC-1431029"
 rsyslog_documantation_path = "https://www.rsyslog.com/doc/master/configuration/actions.html"
 temp_file_path = "/tmp/syslog_temp_config.txt"
-logrotate_temp_path = "/tmp/rsyslog-logrotate.conf"
-logrotate_target_path = "/etc/logrotate.d/rsyslog"
+rsyslog_config_temp_path = "/tmp/rsyslog-no-disk-storage.conf"
 
-## START manually logrotate
+## START manually logrotate / no disk storage configuration
 
-def configure_rsyslog_logrotate():
+def configure_rsyslog_no_disk_storage():
     '''
-    Create a logrotate policy to prevent rsyslog-managed files from filling disk.
-    Uses the existing /etc/logrotate.d/rsyslog file.
+    Configure rsyslog to not write logs to disk to prevent full disk scenarios.
+    This is essential for the Azure Monitor Agent to function properly.
+    Syslog messages received on port 514 are processed but not stored locally.
     '''
     if os.environ.get("CONFIGURE_LOGROTATE", "true").lower() not in ["true", "1", "yes"]:
         return True
 
-    logrotate_config = """/var/log/messages
-/var/log/secure
-/var/log/maillog
-/var/log/cron
-/var/log/spooler
-/var/log/syslog
-{
-    rotate 3
-    size 10M
-    missingok
-    notifempty
-    sharedscripts
-    postrotate
-        /bin/systemctl reload rsyslog > /dev/null 2>&1 || true
-    endscript
-}"""
+    # Configuration to prevent disk writing
+    rsyslog_discard_config = """# Disable local file logging to prevent full disk scenarios
+# Only forward messages received on syslog port 514
+# Do not write any logs to local disk files
+
+# Stop processing after receiving input
+# This prevents default log file writes
+:programname, !contains, "AMA" ~
+"""
 
     # Write to temporary file
     try:
-        with open(logrotate_temp_path, 'w') as f:
-            f.write(logrotate_config)
+        with open(rsyslog_config_temp_path, 'w') as f:
+            f.write(rsyslog_discard_config)
     except Exception as e:
-        print_error("Error: could not write logrotate configuration to " + logrotate_temp_path)
+        print_error("Error: could not write rsyslog configuration to " + rsyslog_config_temp_path)
         print_error(str(e))
         return False
 
-    # Copy to target location using sudo
-    command_tokens = ["sudo", "cp", logrotate_temp_path, logrotate_target_path]
+    # Append to rsyslog.conf to prevent local file logging
+    rsyslog_append_path = "/etc/rsyslog.d/99-no-disk-storage.conf"
+    command_tokens = ["sudo", "cp", rsyslog_config_temp_path, rsyslog_append_path]
     copy_process = subprocess.Popen(command_tokens, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     time.sleep(2)
     o, e = copy_process.communicate()
     
     if copy_process.returncode != 0:
         handle_error(e if e else b"Unknown error", 
-                     error_response_str="Error: could not copy logrotate configuration to " + logrotate_target_path)
+                     error_response_str="Error: could not configure rsyslog to prevent disk storage at " + rsyslog_append_path)
         return False
 
-    print_ok("Logrotate configuration applied to " + logrotate_target_path)
+    print_ok("Rsyslog configured to prevent local disk storage - " + rsyslog_append_path)
     return True
-## END manually logrotate
+## END manually logrotate / no disk storage configuration
 
 
 def print_error(input_str):
@@ -316,7 +310,7 @@ def set_rsyslog_configuration():
     else:
         set_rsyslog_old_configuration()
 ## START manually logrotate        
-    configure_rsyslog_logrotate()
+    configure_rsyslog_no_disk_storage()
 ## END manually logrotate
 
 
