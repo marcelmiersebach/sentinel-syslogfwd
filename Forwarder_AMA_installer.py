@@ -27,74 +27,60 @@ rsyslog_old_config_tcp_content = "# provides TCP syslog reception\n$ModLoad imtc
 syslog_ng_documantation_path = "https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.26/administration-guide/34#TOPIC-1431029"
 rsyslog_documantation_path = "https://www.rsyslog.com/doc/master/configuration/actions.html"
 temp_file_path = "/tmp/syslog_temp_config.txt"
-logrotate_temp_path = "/tmp/rsyslog-forwarder-logrotate.conf"
-logrotate_target_path = "/etc/logrotate.d/rsyslog-forwarder"
+logrotate_temp_path = "/tmp/rsyslog-logrotate.conf"
+logrotate_target_path = "/etc/logrotate.d/rsyslog"
 
 ## START manually logrotate
 
 def configure_rsyslog_logrotate():
     '''
     Create a logrotate policy to prevent rsyslog-managed files from filling disk.
-    Controlled by env vars:
-      CONFIGURE_LOGROTATE (default: true)
-      LOGROTATE_ROTATE (default: 10)
-      LOGROTATE_SIZE_MB (optional: if set, use size-based rotation)
-      LOGROTATE_FREQUENCY (default: daily; when size not set)
-      LOGROTATE_PATHS (default set of common rsyslog files)
+    Uses the existing /etc/logrotate.d/rsyslog file.
     '''
     if os.environ.get("CONFIGURE_LOGROTATE", "true").lower() not in ["true", "1", "yes"]:
         return True
 
-    rotate_count = int(os.environ.get("LOGROTATE_ROTATE", "10"))
-    # Default to 10MB size-based rotation unless overridden
-    size_mb_env = os.environ.get("LOGROTATE_SIZE_MB", "10")
-    frequency = os.environ.get("LOGROTATE_FREQUENCY", "daily")
-    paths = os.environ.get(
-        "LOGROTATE_PATHS",
-        "/var/log/messages /var/log/secure /var/log/maillog /var/log/cron /var/log/spooler /var/log/syslog /var/log/*.log",
-    )
+    logrotate_config = """/var/log/messages
+/var/log/secure
+/var/log/maillog
+/var/log/cron
+/var/log/spooler
+/var/log/syslog
+/var/log/*.log {
+    rotate 10
+    size 10M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        /bin/systemctl reload rsyslog > /dev/null 2>&1 || true
+    endscript
+}"""
 
-    stanza_lines = [paths + " {", f"    rotate {rotate_count}"]
-    if size_mb_env:
-        try:
-            size_mb = int(size_mb_env)
-            stanza_lines.append(f"    size {size_mb}M")
-        except ValueError:
-            print_warning("LOGROTATE_SIZE_MB is invalid; falling back to frequency-based rotation.")
-            stanza_lines.append(f"    {frequency}")
-    else:
-        stanza_lines.append(f"    {frequency}")
-
-    stanza_lines.extend([
-        "    missingok",
-        "    notifempty",
-        "    compress",
-        "    delaycompress",
-        "    sharedscripts",
-        "    postrotate",
-        "        /bin/systemctl reload rsyslog > /dev/null 2>&1 || true",
-        "    endscript",
-        "}",
-    ])
-
-    content = "\n".join(stanza_lines) + "\n"
-
+    # Write to temporary file
     try:
-        with open(logrotate_temp_path, "wt") as f:
-            f.write(content)
-        command_tokens = ["sudo", "cp", logrotate_temp_path, logrotate_target_path]
-        proc = subprocess.Popen(command_tokens, stdout=subprocess.PIPE)
-        time.sleep(2)
-        o, e = proc.communicate()
-        if e is not None:
-            handle_error(e, error_response_str="Error: could not install logrotate policy for rsyslog")
-            return False
-        print_ok(f"Installed logrotate policy at {logrotate_target_path} with rotate {rotate_count}.")
-        return True
-    except Exception as ex:
-        handle_error(str(ex).encode("utf-8"), error_response_str="Error: failed to write logrotate configuration")
+        with open(logrotate_temp_path, 'w') as f:
+            f.write(logrotate_config)
+    except Exception as e:
+        print_error("Error: could not write logrotate configuration to " + logrotate_temp_path)
+        print_error(str(e))
         return False
+
+    # Copy to target location using sudo
+    command_tokens = ["sudo", "cp", logrotate_temp_path, logrotate_target_path]
+    copy_process = subprocess.Popen(command_tokens, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    time.sleep(2)
+    o, e = copy_process.communicate()
     
+    if copy_process.returncode != 0:
+        handle_error(e if e else b"Unknown error", 
+                     error_response_str="Error: could not copy logrotate configuration to " + logrotate_target_path)
+        return False
+
+    print_ok("Logrotate configuration applied to " + logrotate_target_path)
+    return True
 ## END manually logrotate
 
 
