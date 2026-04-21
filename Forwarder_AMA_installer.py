@@ -10,9 +10,6 @@
 
 import subprocess
 import time
-## START manually logrotate
-import os
-## END manually logrotate
 
 rsyslog_daemon_name = "rsyslog"
 syslog_ng_daemon_name = "syslog-ng"
@@ -27,53 +24,6 @@ rsyslog_old_config_tcp_content = "# provides TCP syslog reception\n$ModLoad imtc
 syslog_ng_documantation_path = "https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.26/administration-guide/34#TOPIC-1431029"
 rsyslog_documantation_path = "https://www.rsyslog.com/doc/master/configuration/actions.html"
 temp_file_path = "/tmp/syslog_temp_config.txt"
-rsyslog_config_temp_path = "/tmp/rsyslog-no-disk-storage.conf"
-
-## START manually logrotate / no disk storage configuration
-
-def configure_rsyslog_no_disk_storage():
-    '''
-    Configure rsyslog to not write logs to disk to prevent full disk scenarios.
-    This is essential for the Azure Monitor Agent to function properly.
-    Syslog messages received on port 514 are processed but not stored locally.
-    '''
-    if os.environ.get("CONFIGURE_LOGROTATE", "true").lower() not in ["true", "1", "yes"]:
-        return True
-
-    # Configuration to prevent disk writing
-    rsyslog_discard_config = """# Disable local file logging to prevent full disk scenarios
-# Only forward messages received on syslog port 514
-# Do not write any logs to local disk files
-
-# Stop processing after receiving input
-# This prevents default log file writes
-:programname, !contains, "AMA" ~
-"""
-
-    # Write to temporary file
-    try:
-        with open(rsyslog_config_temp_path, 'w') as f:
-            f.write(rsyslog_discard_config)
-    except Exception as e:
-        print_error("Error: could not write rsyslog configuration to " + rsyslog_config_temp_path)
-        print_error(str(e))
-        return False
-
-    # Append to rsyslog.conf to prevent local file logging
-    rsyslog_append_path = "/etc/rsyslog.d/99-no-disk-storage.conf"
-    command_tokens = ["sudo", "cp", rsyslog_config_temp_path, rsyslog_append_path]
-    copy_process = subprocess.Popen(command_tokens, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    time.sleep(2)
-    o, e = copy_process.communicate()
-    
-    if copy_process.returncode != 0:
-        handle_error(e if e else b"Unknown error", 
-                     error_response_str="Error: could not configure rsyslog to prevent disk storage at " + rsyslog_append_path)
-        return False
-
-    print_ok("Rsyslog configured to prevent local disk storage - " + rsyslog_append_path)
-    return True
-## END manually logrotate / no disk storage configuration
 
 
 def print_error(input_str):
@@ -265,40 +215,6 @@ def restart_syslog_ng():
     print_ok("Syslog-ng daemon restarted successfully")
     return True
 
-## START manually added Firewall configuration
-def configure_firewall():
-    '''
-    Configure firewalld to open port 514 for TCP and UDP.
-    Skips gracefully if firewalld is not present.
-    '''
-    # Detect firewalld
-    detect_cmd = ["which", "firewall-cmd"]
-    detect_proc = subprocess.Popen(detect_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    time.sleep(1)
-    o, e = detect_proc.communicate()
-    if detect_proc.returncode != 0 or (o is None or o.decode(encoding='UTF-8').strip() == ""):
-        print_warning("firewalld not detected; skipping firewall port configuration.")
-        return False
-
-    port = daemon_default_incoming_port
-    commands = [
-        ["sudo", "firewall-cmd", "--permanent", "--add-port=" + port + "/tcp"],
-        ["sudo", "firewall-cmd", "--permanent", "--add-port=" + port + "/udp"],
-        ["sudo", "firewall-cmd", "--reload"],
-    ]
-
-    for cmd in commands:
-        print_notice(" ".join(cmd))
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        time.sleep(2)
-        o, e = proc.communicate()
-        if proc.returncode != 0:
-            handle_error(e if e is not None else b"", error_response_str="Error: firewall command failed")
-            return False
-
-    print_ok("Firewall configured to allow port " + port + " for TCP and UDP.")
-    return True
-## END manually added Firewall configuration
 
 def set_rsyslog_configuration():
     '''
@@ -309,10 +225,6 @@ def set_rsyslog_configuration():
         set_rsyslog_new_configuration()
     else:
         set_rsyslog_old_configuration()
-## START manually logrotate        
-    configure_rsyslog_no_disk_storage()
-## END manually logrotate
-
 
 
 def is_rsyslog():
@@ -321,6 +233,8 @@ def is_rsyslog():
     '''
     # Meaning ps -ef | grep "daemon name" has returned more then the grep result
     return process_check(rsyslog_daemon_name) > 0
+
+
 def is_syslog_ng():
     '''
     Returns True if the daemon is 'Syslog-ng'
@@ -391,9 +305,6 @@ def main():
         print("Located rsyslog daemon running on the machine")
         set_rsyslog_configuration()
         restart_rsyslog()
-## START manually added Firewall configuration
-        configure_firewall()
-## END manually added Firewall configuration
         print_warning("Please note that the installation script opens port 514 to listen to incoming messages in both"
                       " UDP and TCP protocols. To change this setting, refer to the Rsyslog configuration file located at "
                       "'/etc/rsyslog.conf'.")
@@ -401,9 +312,6 @@ def main():
         print("Located syslog-ng daemon running on the machine")
         set_syslog_ng_configuration()
         restart_syslog_ng()
-## START manually added Firewall configuration
-        configure_firewall()
-## END manually added Firewall configuration
         print_warning("Please note that the installation script opens port 514 to listen to incoming messages in both"
                       " UDP and TCP protocols. To change this setting, refer to the Syslog-ng configuration file located at"
                       " '/etc/syslog-ng/syslog-ng.conf'.")
