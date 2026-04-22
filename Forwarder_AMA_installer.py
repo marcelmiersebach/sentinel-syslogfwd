@@ -21,8 +21,8 @@ rsyslog_module_udp_content = "# provides UDP syslog reception\nmodule(load=\"imu
 rsyslog_module_tcp_content = "# provides TCP syslog reception\nmodule(load=\"imtcp\")\ninput(type=\"imtcp\" port=\"" + daemon_default_incoming_port + "\")\n"
 rsyslog_old_config_udp_content = "# provides UDP syslog reception\n$ModLoad imudp\n$UDPServerRun " + daemon_default_incoming_port + "\n"
 rsyslog_old_config_tcp_content = "# provides TCP syslog reception\n$ModLoad imtcp\n$InputTCPServerRun " + daemon_default_incoming_port + "\n"
+rsyslog_discard_drop_in_path = "/etc/rsyslog.d/10-discard-local.conf"
 rsyslog_discard_local_stop_content = "# Discard all messages - do not store logs locally\n*.* stop\n"
-rsyslog_discard_local_content = "# Discard all messages - do not store logs locally\n*.* ~\n"
 syslog_ng_documantation_path = "https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.26/administration-guide/34#TOPIC-1431029"
 rsyslog_documantation_path = "https://www.rsyslog.com/doc/master/configuration/actions.html"
 temp_file_path = "/tmp/syslog_temp_config.txt"
@@ -130,7 +130,6 @@ def is_rsyslog_new_configuration():
 def set_rsyslog_new_configuration():
     """
     Sets the Rsyslog configuration to listen on port 514 for incoming requests - For new config format.
-    Also disables local log storage by appending a discard rule.
     """
     with open(rsyslog_conf_path, "rt") as fin:
         with open(temp_file_path, "wt") as fout:
@@ -152,10 +151,8 @@ def set_rsyslog_new_configuration():
     o, e = write_new_content.communicate()
     if e is not None:
         handle_error(e,
-                     error_response_str="Error: could not change Rsyslog.conf configuration  in -" + rsyslog_conf_path)
+                     error_response_str="Error: could not change Rsyslog.conf configuration in -" + rsyslog_conf_path)
         return False
-    # Disable local log storage - discard all messages after forwarding
-    append_content_to_file(rsyslog_discard_local_stop_content, rsyslog_conf_path)
     print_ok("Rsyslog.conf configuration was changed to fit required protocol - " + rsyslog_conf_path)
     return True
 
@@ -163,7 +160,6 @@ def set_rsyslog_new_configuration():
 def set_rsyslog_old_configuration():
     """
     Sets the Rsyslog configuration to listen on port 514 for incoming requests - For old config format.
-    Also disables local log storage by appending a discard rule.
     """
     add_udp = False
     add_tcp = False
@@ -183,10 +179,22 @@ def set_rsyslog_old_configuration():
         append_content_to_file(rsyslog_old_config_udp_content, rsyslog_conf_path)
     if add_tcp or not is_exist_tcp_conf:
         append_content_to_file(rsyslog_old_config_tcp_content, rsyslog_conf_path)
-    # Disable local log storage - discard all messages after forwarding
-    append_content_to_file(rsyslog_discard_local_content, rsyslog_conf_path)
     print_ok("Rsyslog.conf configuration was changed to fit required protocol - " + rsyslog_conf_path)
     return True
+
+
+def set_rsyslog_discard_drop_in():
+    """
+    Writes a discard rule into /etc/rsyslog.d/10-discard-local.conf which sorts
+    before 50-default.conf, preventing any messages from reaching the syslog
+    file write rule and stopping /var/log/syslog from growing.
+    """
+    result = append_content_to_file(rsyslog_discard_local_stop_content, rsyslog_discard_drop_in_path, overide=True)
+    if result:
+        print_ok("Discard rule written to " + rsyslog_discard_drop_in_path + " - local log storage disabled")
+    else:
+        print_error("Error: could not write discard rule to " + rsyslog_discard_drop_in_path)
+    return result
 
 
 def restart_rsyslog():
@@ -225,20 +233,21 @@ def restart_syslog_ng():
 
 def set_rsyslog_configuration():
     '''
-    Set the configuration for rsyslog
-    we support from version 7 and above
+    Set the configuration for rsyslog.
+    We support from version 7 and above.
+    Also deploys a drop-in discard rule to prevent local log storage.
     '''
     if is_rsyslog_new_configuration():
         set_rsyslog_new_configuration()
     else:
         set_rsyslog_old_configuration()
+    set_rsyslog_discard_drop_in()
 
 
 def is_rsyslog():
     '''
     Returns True if the daemon is 'Rsyslog'
     '''
-    # Meaning ps -ef | grep "daemon name" has returned more then the grep result
     return process_check(rsyslog_daemon_name) > 0
 
 
@@ -246,7 +255,6 @@ def is_syslog_ng():
     '''
     Returns True if the daemon is 'Syslog-ng'
     '''
-    # Meaning ps -ef | grep "daemon name" has returned more then the grep result
     return process_check(syslog_ng_daemon_name) > 0
 
 
@@ -260,7 +268,7 @@ def set_syslog_ng_configuration():
     with open(syslog_ng_conf_path, "rt") as fin:
         with open(temp_file_path, "wt") as fout:
             for line in fin:
-                # fount snet
+                # found snet
                 if "s_net" in line and not "#":
                     snet_found = True
                 # found source that is not s_net - should remove it
@@ -269,7 +277,6 @@ def set_syslog_ng_configuration():
                 # if starting a new definition stop commenting
                 elif comment_line is True and "#" not in line and (
                         "source" in line or "destination" in line or "filter" in line or "log" in line):
-                    # stop commenting out
                     comment_line = False
                 # write line correctly
                 fout.write(line if not comment_line else ("#" + line))
@@ -279,7 +286,7 @@ def set_syslog_ng_configuration():
     o, e = write_new_content.communicate()
     if e is not None:
         handle_error(e,
-                     error_response_str="Error: could not change syslog-ng.conf configuration  in -" + syslog_ng_conf_path)
+                     error_response_str="Error: could not change syslog-ng.conf configuration in -" + syslog_ng_conf_path)
         return False
     if not snet_found:
         append_content_to_file(line=syslog_ng_source_content, file_path=syslog_ng_conf_path)
