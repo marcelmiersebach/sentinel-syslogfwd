@@ -21,6 +21,8 @@ rsyslog_module_udp_content = "# provides UDP syslog reception\nmodule(load=\"imu
 rsyslog_module_tcp_content = "# provides TCP syslog reception\nmodule(load=\"imtcp\")\ninput(type=\"imtcp\" port=\"" + daemon_default_incoming_port + "\")\n"
 rsyslog_old_config_udp_content = "# provides UDP syslog reception\n$ModLoad imudp\n$UDPServerRun " + daemon_default_incoming_port + "\n"
 rsyslog_old_config_tcp_content = "# provides TCP syslog reception\n$ModLoad imtcp\n$InputTCPServerRun " + daemon_default_incoming_port + "\n"
+rsyslog_discard_local_stop_content = "# Discard all messages - do not store logs locally\n*.* stop\n"
+rsyslog_discard_local_content = "# Discard all messages - do not store logs locally\n*.* ~\n"
 syslog_ng_documantation_path = "https://www.syslog-ng.com/technical-documents/doc/syslog-ng-open-source-edition/3.26/administration-guide/34#TOPIC-1431029"
 rsyslog_documantation_path = "https://www.rsyslog.com/doc/master/configuration/actions.html"
 temp_file_path = "/tmp/syslog_temp_config.txt"
@@ -82,7 +84,6 @@ def process_check(process_name):
     return len(tokens)
 
 
-
 def set_file_read_permissions(file_path):
     """
     :param  file_path: the path to change the permissions for
@@ -128,7 +129,8 @@ def is_rsyslog_new_configuration():
 
 def set_rsyslog_new_configuration():
     """
-    Sets the Rsyslog configuration to listen on port 514 for incoming requests- For new config format
+    Sets the Rsyslog configuration to listen on port 514 for incoming requests - For new config format.
+    Also disables local log storage by appending a discard rule.
     """
     with open(rsyslog_conf_path, "rt") as fin:
         with open(temp_file_path, "wt") as fout:
@@ -152,13 +154,16 @@ def set_rsyslog_new_configuration():
         handle_error(e,
                      error_response_str="Error: could not change Rsyslog.conf configuration  in -" + rsyslog_conf_path)
         return False
+    # Disable local log storage - discard all messages after forwarding
+    append_content_to_file(rsyslog_discard_local_stop_content, rsyslog_conf_path)
     print_ok("Rsyslog.conf configuration was changed to fit required protocol - " + rsyslog_conf_path)
     return True
 
 
 def set_rsyslog_old_configuration():
     """
-    Sets the Rsyslog configuration to listen on port 514 for incoming requests- For old config format
+    Sets the Rsyslog configuration to listen on port 514 for incoming requests - For old config format.
+    Also disables local log storage by appending a discard rule.
     """
     add_udp = False
     add_tcp = False
@@ -178,6 +183,8 @@ def set_rsyslog_old_configuration():
         append_content_to_file(rsyslog_old_config_udp_content, rsyslog_conf_path)
     if add_tcp or not is_exist_tcp_conf:
         append_content_to_file(rsyslog_old_config_tcp_content, rsyslog_conf_path)
+    # Disable local log storage - discard all messages after forwarding
+    append_content_to_file(rsyslog_discard_local_content, rsyslog_conf_path)
     print_ok("Rsyslog.conf configuration was changed to fit required protocol - " + rsyslog_conf_path)
     return True
 
@@ -322,7 +329,6 @@ def main():
         exit()
     print_full_disk_warning()
     print_ok("Installation completed successfully")
-
 
 
 main()
